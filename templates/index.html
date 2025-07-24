@@ -1,0 +1,209 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Hello, {{ current_user.username }} 👋</h2>
+    <button onclick="toggleDarkMode()" class="btn btn-outline-dark">🌃 Toggle Dark Mode</button>
+</div>
+
+<!-- 🎬 Lottie Banner -->
+<div class="text-center mb-5" style="height: 200px;" id="lottie-dashboard"></div>
+
+<!-- 🧩 Stats Cards -->
+<div class="row mb-5 g-4">
+    <div class="col-md-4">
+        <div class="card shadow border-0 text-center">
+            <div class="card-body">
+                <h5 class="card-title fw-bold"><i class="bi bi-list-task"></i> Total Tasks</h5>
+                <p class="display-6">{{ tasks | length }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow border-0 text-center">
+            <div class="card-body">
+                <h5 class="card-title fw-bold"><i class="bi bi-clock-history"></i> Total Time</h5>
+                <p class="display-6">{{ tasks | sum(attribute='time_spent') }} min</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow border-0 text-center">
+            <div class="card-body">
+                <h5 class="card-title fw-bold"><i class="bi bi-tags"></i> Categories</h5>
+                <p class="display-6">{{ tasks | map(attribute='category') | unique | list | length }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 🔧 Task Manager Section -->
+<div class="row">
+    <div class="col-md-6">
+        <h4>Add New Task</h4>
+        <form method="POST" action="/add_task" class="shadow p-4 bg-white rounded mb-4">
+            <div class="mb-3">
+                <label for="title" class="form-label fw-bold">Task Title</label>
+                <input type="text" name="title" id="title" class="form-control" placeholder="e.g., Complete Report" required>
+            </div>
+            <div class="mb-3">
+                <label for="category" class="form-label fw-bold">Category</label>
+                <input type="text" name="category" id="category" class="form-control" placeholder="e.g., Work, Study">
+            </div>
+            <button type="submit" class="btn btn-success w-100">Add Task</button>
+        </form>
+    </div>
+
+    <div class="col-md-6">
+        <h4>Your Tasks</h4>
+        {% if tasks %}
+        <ul class="list-group shadow" id="taskList">
+            {% for task in tasks %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>{{ task.title }}</strong><br>
+                    <small class="text-muted">{{ task.category }}</small><br>
+                    <small id="timer-{{ task.id }}" class="text-success fw-bold">{{ task.time_spent }} min</small>
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-outline-success me-2" onclick="startTimer({{ task.id }})">▶ Start</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="stopTimer({{ task.id }})">⏸ Stop</button>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        <button class="btn btn-secondary mt-3" onclick="downloadPDF()">⬇ Download PDF</button>
+        {% else %}
+        <p class="text-muted">No tasks added yet. Start by adding one ➕</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- 📈 Analytics -->
+<h4 class="mt-5">Task Analytics 📊</h4>
+<canvas id="taskChart" class="shadow p-3 bg-white rounded"></canvas>
+<a href="{{ url_for('download_csv') }}" class="btn btn-primary mt-4">⬇️ Download CSV Report</a>
+
+<!-- Scripts -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.7.4/lottie.min.js"></script>
+
+<script>
+let timers = {};
+let timeSpent = {};
+
+function toggleDarkMode() {
+    document.body.classList.toggle("bg-dark");
+    document.body.classList.toggle("text-white");
+    const cards = document.querySelectorAll(".card, .list-group-item, canvas");
+    cards.forEach(card => card.classList.toggle("bg-dark"));
+}
+
+function startTimer(taskId) {
+    if (!timers[taskId]) {
+        timers[taskId] = setInterval(() => {
+            const timerElement = document.getElementById('timer-' + taskId);
+            if (!timeSpent[taskId]) {
+                timeSpent[taskId] = parseInt(timerElement.innerText) || 0;
+            }
+            timeSpent[taskId] += 1;
+            timerElement.innerText = timeSpent[taskId] + ' min';
+        }, 60000);
+        alert('Timer started for Task #' + taskId);
+    }
+}
+
+function stopTimer(taskId) {
+    if (timers[taskId]) {
+        clearInterval(timers[taskId]);
+        timers[taskId] = null;
+
+        const spent = timeSpent[taskId] || 0;
+
+        fetch(`/update_time/${taskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `time_spent=${spent}`
+        }).then(response => {
+            if (response.ok) {
+                alert('Time saved successfully ✅');
+                location.reload();
+            } else {
+                alert('Failed to save time ❌');
+            }
+        });
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const taskData = {{ tasks_data | tojson | default('[]') }};
+    const categoryCounts = {};
+    const categoryTime = {};
+
+    taskData.forEach(task => {
+        const category = task.category || 'Uncategorized';
+        categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+        categoryTime[category] = (categoryTime[category] || 0) + (task.time_spent || 0);
+    });
+
+    const ctx = document.getElementById('taskChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: Object.keys(categoryCounts),
+            datasets: [
+                {
+                    label: 'Tasks',
+                    data: Object.values(categoryCounts),
+                    backgroundColor: '#4CAF50'
+                },
+                {
+                    label: 'Time Spent (min)',
+                    data: Object.values(categoryTime),
+                    backgroundColor: '#2196F3'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'top' },
+                title: { display: true, text: 'Tasks & Time by Category' }
+            }
+        }
+    });
+
+    // 🎬 Lottie dashboard animation
+    lottie.loadAnimation({
+        container: document.getElementById('lottie-dashboard'),
+        renderer: 'svg',
+        loop: true,
+        autoplay: true,
+        path: 'https://assets5.lottiefiles.com/private_files/lf30_huuhjson.json'
+    });
+});
+
+function downloadPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text("Task Report", 20, 20);
+
+    const tasks = [...document.querySelectorAll('#taskList li')];
+    let y = 40;
+    tasks.forEach((task, index) => {
+        const text = task.innerText.replace(/\n/g, ' ').trim();
+        doc.text(`${index + 1}. ${text}`, 20, y);
+        y += 10;
+        if (y > 270) {
+            doc.addPage();
+            y = 20;
+        }
+    });
+
+    doc.save("Task_Report.pdf");
+}
+</script>
+{% endblock %}

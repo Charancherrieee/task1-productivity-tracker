@@ -1,0 +1,163 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2 class="mb-4">Welcome back, {{ current_user.username }} 👋</h2>
+
+<div class="row">
+    <!-- Add Task Section -->
+    <div class="col-md-6">
+        <h4 class="mb-3">Add a New Task</h4>
+        <form method="POST" action="/add_task" class="shadow bg-white p-4 rounded">
+            <div class="mb-3">
+                <label for="title" class="form-label fw-semibold">Task Title</label>
+                <input type="text" name="title" id="title" class="form-control" placeholder="e.g., Complete project report" required>
+            </div>
+            <div class="mb-3">
+                <label for="category" class="form-label fw-semibold">Category</label>
+                <input type="text" name="category" id="category" class="form-control" placeholder="e.g., Work, Study, Personal">
+            </div>
+            <button type="submit" class="btn btn-success w-100">Add Task</button>
+        </form>
+    </div>
+
+    <!-- Task List Section -->
+    <div class="col-md-6">
+        <h4 class="mb-3">Your Tasks</h4>
+        {% if tasks %}
+        <ul class="list-group shadow" id="taskList">
+            {% for task in tasks %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>{{ task.title }}</strong><br>
+                    <small class="text-muted">{{ task.category }}</small><br>
+                    <small id="timer-{{ task.id }}" class="text-success fw-bold">{{ task.time_spent }} min</small>
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-outline-success me-2" onclick="startTimer({{ task.id }})">▶ Start</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="stopTimer({{ task.id }})">⏸ Stop</button>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        <button class="btn btn-secondary mt-3" onclick="downloadPDF()">⬇ Download PDF</button>
+        {% else %}
+        <p class="text-muted">You haven't added any tasks yet. Get started by adding one ➕</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Analytics Section -->
+<h4 class="mt-5">Task Analytics 📊</h4>
+<canvas id="taskChart" class="shadow p-3 bg-white rounded"></canvas>
+<a href="{{ url_for('download_csv') }}" class="btn btn-primary mt-4">⬇️ Download CSV Report</a>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<script>
+let timers = {};
+let timeSpent = {};
+
+// Start timer
+function startTimer(taskId) {
+    if (!timers[taskId]) {
+        const timerElement = document.getElementById('timer-' + taskId);
+        timeSpent[taskId] = parseInt(timerElement.innerText) || 0;
+
+        timers[taskId] = setInterval(() => {
+            timeSpent[taskId]++;
+            timerElement.innerText = timeSpent[taskId] + ' min';
+        }, 60000);
+
+        alert('Timer started for Task #' + taskId);
+    }
+}
+
+// Stop timer and update time
+function stopTimer(taskId) {
+    if (timers[taskId]) {
+        clearInterval(timers[taskId]);
+        timers[taskId] = null;
+
+        const spent = timeSpent[taskId] || 0;
+
+        fetch(`/update_time/${taskId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `time_spent=${spent}`
+        })
+        .then(response => {
+            if (response.ok) {
+                alert('Time saved successfully ✅');
+                location.reload();
+            } else {
+                alert('Failed to save time ❌');
+            }
+        });
+    }
+}
+
+// Chart.js for analytics
+document.addEventListener('DOMContentLoaded', function () {
+    const taskData = {{ tasks_data | tojson }};
+    const categoryCounts = {};
+    const categoryTime = {};
+
+    taskData.forEach(task => {
+        const category = task.category || 'Uncategorized';
+        categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+        categoryTime[category] = (categoryTime[category] || 0) + (task.time_spent || 0);
+    });
+
+    const ctx = document.getElementById('taskChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: Object.keys(categoryCounts),
+            datasets: [
+                {
+                    label: 'Number of Tasks',
+                    data: Object.values(categoryCounts),
+                    backgroundColor: '#4CAF50'
+                },
+                {
+                    label: 'Total Time Spent (min)',
+                    data: Object.values(categoryTime),
+                    backgroundColor: '#2196F3'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'top' },
+                title: { display: true, text: 'Task Overview by Category' }
+            }
+        }
+    });
+});
+
+// PDF Export
+function downloadPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text("Task Report", 20, 20);
+
+    const tasks = [...document.querySelectorAll('#taskList li')];
+    let y = 40;
+    tasks.forEach((task, index) => {
+        const text = task.innerText.replace(/\n/g, ' ').trim();
+        doc.text(`${index + 1}. ${text}`, 20, y);
+        y += 10;
+        if (y > 270) {
+            doc.addPage();
+            y = 20;
+        }
+    });
+
+    doc.save("Task_Report.pdf");
+}
+</script>
+{% endblock %}
